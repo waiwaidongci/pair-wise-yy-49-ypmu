@@ -10,9 +10,19 @@
   let relation = $state<Mapping['relation']>('支撑')
   let weight = $state(1)
   let query = $state('')
+  let weightDrafts = $state<Record<string, number>>({})
+
   const issues = $derived(validateCurriculum($curriculumStore))
   const visibleIds = $derived(new Set($curriculumStore.nodes.filter((node) => !query || node.label.includes(query) || node.id.includes(query)).map((node) => node.id)))
   const selected = $derived($curriculumStore.nodes.find((item) => item.id === selectedNode))
+  const stale = $derived($curriculumStore.baseline !== $curriculumStore.revision)
+  const canEdit = $derived(!$curriculumStore.offline && !stale)
+  const offline = $derived($curriculumStore.offline)
+
+  // 合并完成后清空离线权重草稿，矩阵回到系统（已并入）值。
+  $effect(() => {
+    if (!offline) weightDrafts = {}
+  })
 
   function startDrag(event: MouseEvent, id: string) {
     const node = $curriculumStore.nodes.find((item) => item.id === id)
@@ -32,12 +42,29 @@
   }
 
   function addMapping() {
-    if (source === target) return
+    if (source === target || !canEdit) return
     curriculumStore.addMapping(source, target, relation, weight)
   }
 
+  /** 权重改动：离线时排队（绑定基线），在线时直接并入。旧版只读禁用。 */
+  function commitWeight(mappingId: string, value: number) {
+    if (stale) return
+    if (offline) {
+      curriculumStore.queueWeight(mappingId, value)
+    } else {
+      void curriculumStore.mutate('updateWeight', { entityId: mappingId, weight: value })
+    }
+  }
+
+  /** 覆盖矩阵按当前（已并入）权重实时重算；离线排队的改动在合并前不进入矩阵。 */
   function exportMap() {
-    const blob = new Blob([JSON.stringify($curriculumStore, null, 2)], { type: 'application/json' })
+    const payload = {
+      ...$curriculumStore,
+      exportedAt: new Date().toISOString(),
+      mergedRevision: $curriculumStore.revision,
+      baseline: $curriculumStore.baseline,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -51,18 +78,27 @@
 
 <section class="page">
   <div class="page-head">
-    <div><p class="eyebrow">CURRICULUM MAP / 映射图谱</p><h1>有向关系与覆盖矩阵</h1><p class="muted">拖动节点重新布局；连边关系持久保存，覆盖缺口会立即高亮。</p></div>
-    <div class="actions"><button class="btn-secondary" onclick={exportMap}>导出课程地图</button><button class="btn-primary" onclick={() => $curriculumStore.lock(`R${Number($curriculumStore.revision.slice(1)) + 1}`)}>锁定当前版本</button></div>
+    <div><p class="eyebrow">CURRICULUM MAP / 映射图谱</p><h1>有向关系与覆盖矩阵</h1><p class="muted">权重变化后覆盖矩阵实时重算；导出指向实际并入版本。</p></div>
+    <div class="actions">
+      <button class="btn-secondary" onclick={exportMap}>导出课程地图</button>
+      <button class="btn-primary" onclick={() => curriculumStore.captureBaseline()}>绑定基线离线</button>
+    </div>
   </div>
+
+  {#if stale}
+    <div class="notice error">旧版只读：基线 {$curriculumStore.baseline} 落后于系统版本 {$curriculumStore.revision}，合并批次完成前不可写入。</div>
+  {:else if offline}
+    <div class="notice offline">离线编辑中：权重改动仅排队（基线 {$curriculumStore.baseline}），提交合并后才并入并驱动矩阵重算。</div>
+  {/if}
 
   <div class="matrix-toolbar panel">
     <input bind:value={query} placeholder="搜索目标、课程或单元" />
-    <select bind:value={source}>{#each $curriculumStore.nodes as node}<option value={node.id}>{node.id} · {node.label.split('\n')[0]}</option>{/each}</select>
+    <select bind:value={source} disabled={!canEdit}>{#each $curriculumStore.nodes as node}<option value={node.id}>{node.id} · {node.label.split('\n')[0]}</option>{/each}</select>
     <span>→</span>
-    <select bind:value={target}>{#each $curriculumStore.nodes as node}<option value={node.id}>{node.id} · {node.label.split('\n')[0]}</option>{/each}</select>
-    <select bind:value={relation}><option>支撑</option><option>前置</option><option>教学</option><option>考核</option></select>
-    <input bind:value={weight} type="number" min="0" max="1" step="0.1" />
-    <button class="btn-primary" onclick={addMapping}>新增连边</button>
+    <select bind:value={target} disabled={!canEdit}>{#each $curriculumStore.nodes as node}<option value={node.id}>{node.id} · {node.label.split('\n')[0]}</option>{/each}</select>
+    <select bind:value={relation} disabled={!canEdit}><option>支撑</option><option>前置</option><option>教学</option><option>考核</option></select>
+    <input bind:value={weight} type="number" min="0" max="1" step="0.1" disabled={!canEdit} />
+    <button class="btn-primary" onclick={addMapping} disabled={!canEdit}>新增连边</button>
     <span class="muted">{issues.length} 项校验提示</span>
   </div>
 
@@ -101,7 +137,7 @@
     </section>
 
     <aside class="panel">
-      <div class="panel-head"><h3>覆盖矩阵</h3><span class="muted">Σ 权重</span></div>
+      <div class="panel-head"><h3>覆盖矩阵</h3><span class="muted">Σ 权重 · 按并入版本重算</span></div>
       <div class="coverage-matrix">
         {#each $curriculumStore.nodes.filter((node) => node.type === '毕业要求') as requirement}
           <div class="matrix-row">
@@ -114,6 +150,28 @@
         {/each}
       </div>
       <div class="legend"><span><i class="covered-dot"></i>已有映射</span><span><i class="gap-dot"></i>覆盖缺口</span></div>
+
+      <div class="weight-editor">
+        <div class="panel-head"><h3>权重调整</h3><span class="muted">{offline ? '离线排队' : '在线并入'}</span></div>
+        {#each $curriculumStore.mappings as mapping}
+          {@const from = $curriculumStore.nodes.find((node) => node.id === mapping.source)}
+          {@const to = $curriculumStore.nodes.find((node) => node.id === mapping.target)}
+          <div class="weight-row">
+            <span>{from?.label.split('\n')[0]} → {to?.label.split('\n')[0]}</span>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              value={offline ? (weightDrafts[mapping.id] ?? mapping.weight) : mapping.weight}
+              disabled={stale}
+              oninput={(event) => { if (offline) weightDrafts[mapping.id] = Number(event.currentTarget.value) }}
+              onchange={(event) => commitWeight(mapping.id, Number(event.currentTarget.value))}
+            />
+          </div>
+        {/each}
+      </div>
+
       <div class="node-detail">
         {#if selected}
           <strong>{selected.label.split('\n')[0]}</strong><p>{selected.id} · {selected.type}</p><button class="btn-secondary">编辑节点信息</button>
@@ -125,9 +183,12 @@
 
 <style>
   .actions { display: flex; gap: 8px; }
+  .notice { margin: 0 0 12px; padding: 12px 14px; border-left: 3px solid #cd813a; color: #8a5a2b; background: #fff6e9; }
+  .notice.error { border-color: #bd4d35; color: #913c2b; background: #fff1ec; }
   .matrix-toolbar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 12px; padding: 12px; }
   .matrix-toolbar > input:first-child { max-width: 220px; }
   .matrix-toolbar select { max-width: 230px; }
+  .matrix-toolbar button:disabled { opacity: .5; cursor: not-allowed; }
   .matrix-layout { display: grid; grid-template-columns: minmax(0,1fr) 360px; gap: 14px; align-items: start; }
   svg { display: block; width: 100%; min-width: 900px; background: radial-gradient(circle,#dce2e2 1px,transparent 1px); background-size: 22px 22px; }
   .graph-panel { overflow: auto; }
@@ -152,7 +213,12 @@
   .legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; }
   .covered-dot { background: #3f8c6b; }
   .gap-dot { background: #c14932; }
-  .node-detail { margin: 0 14px 14px; padding: 13px; border-left: 3px solid #377c7b; background: #f3f7f6; }
+  .weight-editor { border-top: 1px solid #e7ebeb; }
+  .weight-editor .panel-head { min-height: 40px; }
+  .weight-row { display: grid; grid-template-columns: 1fr 80px; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #edf0f0; font-size: 11px; color: #53636a; }
+  .weight-row input { padding: 6px 8px; font-size: 12px; }
+  .weight-row input:disabled { background: #f1f3f3; cursor: not-allowed; }
+  .node-detail { margin: 14px; padding: 13px; border-left: 3px solid #377d7a; background: #f3f7f6; }
   .node-detail strong { display: block; }
   .node-detail p { margin: 5px 0 10px; color: #748188; font-size: 11px; }
   @media (max-width: 1050px) { .matrix-layout { grid-template-columns: 1fr; } }

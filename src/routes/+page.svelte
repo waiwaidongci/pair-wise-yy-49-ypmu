@@ -16,6 +16,8 @@
   const issues = $derived(validateCurriculum($curriculumStore))
   const reviewOpen = $derived($curriculumStore.reviewItems.filter((item) => item.status === '待审阅').length)
   const covered = $derived($curriculumStore.nodes.filter((node) => node.type === '毕业要求' && $curriculumStore.mappings.some((mapping) => mapping.source === node.id)).length)
+  const stale = $derived($curriculumStore.baseline !== $curriculumStore.revision)
+  const versionState = $derived(stale ? '旧版只读 · 待合并' : $curriculumStore.offline ? '离线编辑中' : '当前版本可写')
 </script>
 
 <svelte:head><title>课程标准映射总览</title></svelte:head>
@@ -24,6 +26,14 @@
   <div class="page-head">
     <div><p class="eyebrow">CURRICULUM REFORM / 课程改革</p><h1>专业课程图谱总览</h1><p class="muted">从培养目标到考核证据的完整映射，当前数据由 SvelteKit API 与 TanStack Query 提供。</p></div>
     <div class="actions"><a class="btn-secondary" href="/matrix">查看图谱</a><a class="btn-primary" href="/review">处理审阅</a></div>
+  </div>
+
+  <div class="version-bar" class:stale={stale}>
+    <span>当前版本 <strong>{$curriculumStore.revision}</strong></span>
+    <span>绑定基线 <strong>{$curriculumStore.baseline}</strong></span>
+    <span>状态 <strong>{versionState}</strong></span>
+    {#if $curriculumStore.pendingChanges.length > 0}<span>离线批次 <strong>{$curriculumStore.pendingChanges.length} 项待并入</strong></span>{/if}
+    {#if $curriculumStore.conflicts.filter((c) => c.status === 'pending').length > 0}<span>待裁决冲突 <strong>{$curriculumStore.conflicts.filter((c) => c.status === 'pending').length} 项</strong></span>{/if}
   </div>
 
   <div class="metric-grid">
@@ -71,6 +81,10 @@
 <style>
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .actions a { text-decoration: none; }
+  .version-bar { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 14px; padding: 10px 16px; border: 1px solid #dce3e3; border-radius: 10px; background: white; font-size: 12px; color: #6f7d83; }
+  .version-bar strong { color: #25434b; }
+  .version-bar.stale { border-color: #e0a47a; background: #fff6e9; }
+  .version-bar.stale strong { color: #9a5a2b; }
   .overview-grid { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 14px; }
   .chain { padding: 16px; }
   .chain article { padding: 14px; border-left: 4px solid #347d7b; background: #f5f8f8; }

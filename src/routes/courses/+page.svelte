@@ -5,6 +5,9 @@
   const types = ['课程', '单元', '教学活动', '考核'] as const
   const visible = $derived($curriculumStore.nodes.filter((node) => types.includes(node.type as typeof types[number]) && `${node.label}${node.id}`.includes(query)))
   const selected = $derived(visible.find((node) => node.id === selectedCourse) ?? visible[0])
+  const stale = $derived($curriculumStore.baseline !== $curriculumStore.revision)
+  const offline = $derived($curriculumStore.offline)
+  const readOnly = $derived(stale || offline)
 </script>
 
 <svelte:head><title>课程、单元与考核</title></svelte:head>
@@ -12,8 +15,14 @@
 <section class="page">
   <div class="page-head">
     <div><p class="eyebrow">COURSE STRUCTURE / 课程结构</p><h1>课程、单元、教学与考核</h1><p class="muted">建立纵向教学链并检查每个毕业要求是否有可验证的考核证据。</p></div>
-    <button class="btn-primary">新增课程单元</button>
+    <button class="btn-primary" disabled={readOnly}>新增课程单元</button>
   </div>
+
+  {#if stale}
+    <div class="notice error">旧版只读：基线 {$curriculumStore.baseline} 落后于系统版本 {$curriculumStore.revision}，合并批次完成前不可编辑。</div>
+  {:else if offline}
+    <div class="notice offline">离线编辑中：改动排队（基线 {$curriculumStore.baseline}），合并后并入。</div>
+  {/if}
 
   <div class="course-layout">
     <section class="panel">
@@ -34,10 +43,10 @@
         <div class="panel-head"><h3>{selected.label.split('\n')[0]}</h3><span class="muted">{selected.id} · {selected.type}</span></div>
         <div class="detail-body">
           <div class="form-grid">
-            <label>节点名称<input value={selected.label.split('\n')[0]} /></label>
-            <label>节点类型<select value={selected.type}>{#each types as type}<option>{type}</option>{/each}</select></label>
-            <label>所属学期<select><option>2026 秋季</option><option>2027 春季</option></select></label>
-            <label>课程负责人<input value="顾明 / 副教授" /></label>
+            <label>节点名称<input value={selected.label.split('\n')[0]} disabled={readOnly} /></label>
+            <label>节点类型<select value={selected.type} disabled={readOnly}>{#each types as type}<option>{type}</option>{/each}</select></label>
+            <label>所属学期<select disabled={readOnly}><option>2026 秋季</option><option>2027 春季</option></select></label>
+            <label>课程负责人<input value="顾明 / 副教授" disabled={readOnly} /></label>
           </div>
           <h3>直接映射</h3>
           <div class="mapping-list">
@@ -60,6 +69,8 @@
 </section>
 
 <style>
+  .notice { margin: 0 0 12px; padding: 12px 14px; border-left: 3px solid #cd813a; color: #8a5a2b; background: #fff6e9; }
+  .notice.error { border-color: #bd4d35; color: #913c2b; background: #fff1ec; }
   .course-layout { display: grid; grid-template-columns: 330px minmax(0,1fr); gap: 14px; align-items: start; }
   .node-list { padding: 8px; }
   .node-list button { display: grid; width: 100%; grid-template-columns: 80px 1fr auto; align-items: center; gap: 8px; padding: 11px 10px; border: 0; border-radius: 7px; text-align: left; background: transparent; cursor: pointer; }

@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { page } from '$app/state'
   import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query'
   import { curriculumStore } from '$lib/stores'
+  import type { Role } from '$lib/merge'
   import '../app.css'
   const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -14,6 +16,13 @@
     { href: '/matrix', label: '映射图谱', icon: '图' },
     { href: '/review', label: '改革审阅', icon: '审' },
   ]
+  const stale = $derived($curriculumStore.baseline !== $curriculumStore.revision)
+  const canEdit = $derived(!$curriculumStore.offline && !stale)
+  const roles: Role[] = ['负责人', '审阅人']
+
+  onMount(() => {
+    void curriculumStore.hydrateFromServer()
+  })
 </script>
 
 <svelte:head><title>{page.data?.title ?? '课程改革审阅平台'}</title></svelte:head>
@@ -27,7 +36,19 @@
           <a href={item.href} class:active={page.url.pathname === item.href} onclick={() => mobileOpen = false}><span>{item.icon}</span>{item.label}</a>
         {/each}
       </nav>
-      <div class="side-note"><strong>{$curriculumStore.locked ? '版本已锁定' : '草稿自动保存'}</strong><span>当前版本 {$curriculumStore.revision}</span></div>
+      <div class="side-note">
+        <div class="role-switch">
+          <span>当前角色</span>
+          <div class="roles">
+            {#each roles as role}
+              <button class:active={$curriculumStore.role === role} onclick={() => curriculumStore.setRole(role)}>{role}</button>
+            {/each}
+          </div>
+        </div>
+        <strong class:stale={stale}>{stale ? '旧版只读 · 待合并' : $curriculumStore.offline ? '离线编辑中' : '当前版本可写'}</strong>
+        <span>版本 {$curriculumStore.revision} · 基线 {$curriculumStore.baseline}</span>
+        {#if !canEdit}<span class="hint">合并完成前旧版只读</span>{/if}
+      </div>
     </aside>
     <main>
       <header class="mobile-header"><button onclick={() => mobileOpen = !mobileOpen}>菜单</button><strong>{page.data?.title ?? '课程标准映射'}</strong></header>
@@ -51,6 +72,13 @@
   .side-note { margin: auto 12px 14px; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.04); }
   .side-note strong, .side-note span { display: block; font-size: 11px; }
   .side-note span { margin-top: 5px; color: #9eb2b5; }
+  .side-note strong.stale { color: #f0b27a; }
+  .side-note .hint { color: #f0b27a; font-size: 10px; }
+  .role-switch { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.1); }
+  .role-switch > span { color: #9eb2b5; font-size: 10px; }
+  .roles { display: flex; gap: 6px; margin-top: 6px; }
+  .roles button { flex: 1; padding: 6px 4px; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; color: #cfe0e1; background: transparent; font-size: 11px; cursor: pointer; }
+  .roles button.active { color: #0f2b2e; background: #74bcb4; border-color: #74bcb4; font-weight: 700; }
   main { min-width: 0; margin-left: 242px; }
   .mobile-header { display: none; }
   @media (max-width: 800px) {
