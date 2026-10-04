@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { curriculumStore, validateCurriculum } from '$lib/stores'
   import type { Mapping } from '$lib/seed'
 
@@ -10,6 +11,17 @@
   let relation = $state<Mapping['relation']>('支撑')
   let weight = $state(1)
   let query = $state('')
+  let serverRevision = $state<string | null>(null)
+  let mergePending = $state(0)
+
+  // 权重合并后以服务端实际并入版本为准，覆盖矩阵随之重算
+  onMount(async () => {
+    const response = await fetch('/api/curriculum')
+    const state = await response.json()
+    curriculumStore.applyServerState(state)
+    serverRevision = state.revision
+    mergePending = state.mergePending
+  })
   const issues = $derived(validateCurriculum($curriculumStore))
   const visibleIds = $derived(new Set($curriculumStore.nodes.filter((node) => !query || node.label.includes(query) || node.id.includes(query)).map((node) => node.id)))
   const selected = $derived($curriculumStore.nodes.find((item) => item.id === selectedNode))
@@ -37,7 +49,9 @@
   }
 
   function exportMap() {
-    const blob = new Blob([JSON.stringify($curriculumStore, null, 2)], { type: 'application/json' })
+    // 导出指向实际并入版本，而非本地处理时的旧基线
+    const payload = { ...$curriculumStore, exportedAt: new Date().toISOString(), mergedInto: serverRevision ?? $curriculumStore.revision }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -52,8 +66,12 @@
 <section class="page">
   <div class="page-head">
     <div><p class="eyebrow">CURRICULUM MAP / 映射图谱</p><h1>有向关系与覆盖矩阵</h1><p class="muted">拖动节点重新布局；连边关系持久保存，覆盖缺口会立即高亮。</p></div>
-    <div class="actions"><button class="btn-secondary" onclick={exportMap}>导出课程地图</button><button class="btn-primary" onclick={() => $curriculumStore.lock(`R${Number($curriculumStore.revision.slice(1)) + 1}`)}>锁定当前版本</button></div>
+    <div class="actions"><button class="btn-secondary" onclick={exportMap}>导出课程地图</button><button class="btn-primary" onclick={() => curriculumStore.lock(`R${Number($curriculumStore.revision.slice(1)) + 1}`)}>锁定当前版本</button></div>
   </div>
+
+  {#if mergePending > 0}
+    <div class="merge-notice">有 {mergePending} 个字段待裁决，旧版本在合并完成前只读；覆盖矩阵已按实际并入版本 {serverRevision} 重算，课程地图导出将指向该版本。</div>
+  {/if}
 
   <div class="matrix-toolbar panel">
     <input bind:value={query} placeholder="搜索目标、课程或单元" />
@@ -125,6 +143,7 @@
 
 <style>
   .actions { display: flex; gap: 8px; }
+  .merge-notice { margin-bottom: 12px; padding: 12px 14px; border-left: 3px solid #4a7f9e; color: #2f5a74; background: #ecf4f9; }
   .matrix-toolbar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 12px; padding: 12px; }
   .matrix-toolbar > input:first-child { max-width: 220px; }
   .matrix-toolbar select { max-width: 230px; }
